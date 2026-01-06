@@ -21,25 +21,59 @@ const upload = multer({ dest: "uploads/" });
 // Helper to reliably parse Python output
 function parsePythonOutput(output) {
     try {
-        // 1. Try parsing directly
         return JSON.parse(output);
     } catch (e) {
-        // 2. If that fails, try to find the JSON object inside the string
-        // (This fixes cases where PyMuPDF prints warnings like "mupdf: warning...")
+        // Fallback: Find JSON if there is noise
         const jsonStart = output.indexOf('{');
         const jsonEnd = output.lastIndexOf('}');
-
         if (jsonStart !== -1 && jsonEnd !== -1) {
-            const jsonString = output.substring(jsonStart, jsonEnd + 1);
             try {
-                return JSON.parse(jsonString);
-            } catch (innerErr) {
-                throw new Error("Found JSON brackets but content was invalid.");
-            }
+                return JSON.parse(output.substring(jsonStart, jsonEnd + 1));
+            } catch (innerErr) { }
         }
-        throw new Error("No JSON object found in Python output.");
+        throw new Error("Invalid response from AI model.");
     }
 }
+
+// Wrapper to run Python Script
+const runPythonSummarizer = (payload, res, cleanupFile = null) => {
+    // Point to the Python inside the venv
+    const pythonPath = path.join(__dirname, "venv/bin/python");
+    const scriptPath = path.join(__dirname, "summarize_model.py");
+
+    const python = spawn(pythonPath, [scriptPath]);
+
+    let output = "";
+    let errorOutput = "";
+
+    python.stdin.write(JSON.stringify(payload));
+    python.stdin.end();
+
+    python.stdout.on("data", (data) => { output += data.toString(); });
+    python.stderr.on("data", (data) => { errorOutput += data.toString(); });
+
+    python.on("close", (code) => {
+        // Cleanup uploaded file if it exists
+        if (cleanupFile) {
+            try { fs.unlinkSync(cleanupFile); } catch (e) { console.error("Cleanup error:", e); }
+        }
+
+        if (code !== 0) {
+            console.error("❌ Python Crash:", errorOutput);
+            return res.status(500).json({ error: "Model process failed. Check server logs." });
+        }
+
+        try {
+            const result = parsePythonOutput(output);
+            if (result.error) return res.status(500).json({ error: result.error });
+            res.json({ summary: result.summary });
+        } catch (err) {
+            console.error("❌ Parse Error:", err.message);
+            console.error("🔹 Raw Output:", output);
+            res.status(500).json({ error: "Failed to parse AI response. (Is the PDF readable?)" });
+        }
+    });
+};
 
 // ---------- ROUTES ----------
 
@@ -52,73 +86,26 @@ app.post("/summarize", (req, res) => {
     const { text, max_length = 150, min_length = 50 } = req.body;
     if (!text || text.trim().length === 0) return res.status(400).json({ error: "No text provided." });
 
-    // USE VENV PYTHON
-    const python = spawn(path.join(__dirname, "venv/bin/python"), [path.join(__dirname, "summarize_model.py")]);
-    let output = "";
-    let errorOutput = "";
-
-    python.stdin.write(JSON.stringify({ text, max_length: parseInt(max_length), min_length: parseInt(min_length) }));
-    python.stdin.end();
-
-    python.stdout.on("data", (data) => { output += data.toString(); });
-    python.stderr.on("data", (data) => { errorOutput += data.toString(); });
-
-    python.on("close", (code) => {
-        if (code !== 0) {
-            console.error("Python Crash:", errorOutput);
-            return res.status(500).json({ error: "Model crashed. Check terminal logs." });
-        }
-        try {
-            const result = parsePythonOutput(output);
-            if (result.error) return res.status(500).json({ error: result.error });
-            res.json({ summary: result.summary });
-        } catch (err) {
-            console.error("Parse Error:", err.message);
-            console.error("Raw Output was:", output);
-            console.error("Raw Error was:", errorOutput);
-            res.status(500).json({ error: "Failed to read model response. Is the PDF scanned?" });
-        }
-    });
+    runPythonSummarizer({
+        text,
+        max_length: parseInt(max_length),
+        min_length: parseInt(min_length)
+    }, res);
 });
 
 // Summarize File
 app.post("/summarize-file", upload.single("file"), (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded." });
 
-    const { max_length = 150, min_length = 50 } = req.body;
     const filePath = path.join(__dirname, req.file.path);
+    const { max_length = 150, min_length = 50 } = req.body;
 
-    // USE VENV PYTHON
-    const python = spawn(path.join(__dirname, "venv/bin/python"), [path.join(__dirname, "summarize_model.py")]);
-    let output = "";
-    let errorOutput = "";
-
-    python.stdin.write(JSON.stringify({ file_path: filePath, max_length: parseInt(max_length), min_length: parseInt(min_length) }));
-    python.stdin.end();
-
-    python.stdout.on("data", (data) => { output += data.toString(); });
-    python.stderr.on("data", (data) => { errorOutput += data.toString(); });
-
-    python.on("close", (code) => {
-        fs.unlinkSync(filePath); // Cleanup
-
-        // Check for Python crash
-        if (code !== 0) {
-            console.error("❌ Python Crash Log:", errorOutput);
-            return res.status(500).json({ error: "Processing failed. Check server terminal for details." });
-        }
-
-        try {
-            const result = parsePythonOutput(output);
-            if (result.error) return res.status(500).json({ error: result.error });
-            res.json({ summary: result.summary });
-        } catch (err) {
-            console.error("❌ Parse Error:", err.message);
-            console.error("🔹 Raw Output:", output);
-            console.error("🔹 Python Errors:", errorOutput);
-            res.status(500).json({ error: "Could not summarize this PDF. It might be scanned (images only) or encrypted." });
-        }
-    });
+    runPythonSummarizer({
+        file_path: filePath,
+        original_name: req.file.originalname, // <--- ✅ ADDED: Sends original name (e.g., "doc.pdf")
+        max_length: parseInt(max_length),
+        min_length: parseInt(min_length)
+    }, res, filePath);
 });
 
 app.listen(PORT, () => {
