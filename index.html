@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Text Summarizer</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configure Tailwind for custom colors and Inter font -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary': '#4f46e5',
+                        'secondary': '#8b5cf6',
+                        'background': '#f9fafb',
+                        'surface': '#ffffff',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom scrollbar styling */
+        textarea::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        textarea::-webkit-scrollbar-thumb {
+            background-color: #a78bfa;
+            border-radius: 4px;
+        }
+
+        textarea::-webkit-scrollbar-track {
+            background-color: #f3f4f6;
+        }
+
+        /* Style for the button during loading */
+        .loading-btn {
+            pointer-events: none;
+            cursor: not-allowed;
+            opacity: 0.7;
+            position: relative;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-background font-sans min-h-screen p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-extrabold text-gray-900 mb-2">
+                <span class="text-primary">AI</span> Text Summarizer
+            </h1>
+            <p class="text-lg text-gray-600">Condense articles, reports, or documents instantly using Gemini 2.5 Flash.
+            </p>
+        </header>
+
+        <main class="bg-surface shadow-2xl rounded-xl p-6 sm:p-10 border border-gray-100">
+
+            <!-- Input Section -->
+            <section class="mb-8">
+                <h2 class="text-2xl font-semibold text-gray-800 mb-4">1. Provide Text or Document</h2>
+
+                <!-- Text Area Input -->
+                <div class="mb-4">
+                    <label for="text-input" class="block text-sm font-medium text-gray-700 mb-1">Paste your text
+                        below:</label>
+                    <textarea id="text-input" rows="10"
+                        class="w-full p-4 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary transition duration-150 ease-in-out resize-none"
+                        placeholder="Paste your article, essay, or long text here. Maximum recommended length is about 5,000 words."></textarea>
+                </div>
+
+                <div class="text-center text-sm text-gray-500 my-4">
+                    <span class="bg-gray-100 px-3 py-1 rounded-full border border-gray-200">OR</span>
+                </div>
+
+                <!-- File Upload Input -->
+                <div
+                    class="flex flex-col items-center justify-center border-2 border-dashed border-primary/50 rounded-lg p-6 bg-primary/5 hover:bg-primary/10 transition duration-150 ease-in-out">
+                    <!-- Updated accept to allow all common document types -->
+                    <input type="file" id="doc-input"
+                        accept=".txt,.md,.csv,.log, application/pdf, application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        class="hidden" onchange="handleFileSelection(this.files)">
+
+                    <button onclick="document.getElementById('doc-input').click()" type="button"
+                        class="flex items-center space-x-2 text-primary font-medium hover:text-secondary transition duration-150">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round"
+                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        <span>Upload a Document (.txt, .md, .pdf, .docx, etc.)</span>
+                    </button>
+                    <p id="file-status" class="mt-2 text-sm text-gray-500"></p>
+                </div>
+                <p class="mt-2 text-xs text-gray-500 text-center">
+                    Note: For **PDF and DOCX** files, you must copy and paste the text content, as direct binary parsing
+                    is not supported on the frontend.
+                </p>
+            </section>
+
+            <!-- Action Button -->
+            <div class="flex justify-center mb-10">
+                <button id="summarize-btn" onclick="handleSummarizeClick()"
+                    class="flex items-center justify-center px-8 py-3 text-lg font-bold text-white bg-primary rounded-full shadow-lg hover:bg-secondary transition duration-300 ease-in-out transform hover:scale-[1.02] active:scale-[0.98]">
+                    Summarize Text
+                </button>
+            </div>
+
+            <!-- Output Section -->
+            <section>
+                <h2 class="text-2xl font-semibold text-gray-800 mb-4 flex items-center">
+                    2. Summary Result
+                    <span id="word-count" class="ml-4 text-sm font-normal text-gray-500 hidden"></span>
+                </h2>
+
+                <div id="summary-output"
+                    class="min-h-[150px] p-4 sm:p-6 bg-gray-50 border border-gray-200 rounded-lg text-gray-700 leading-relaxed whitespace-pre-wrap">
+                    <p class="text-gray-400 italic">Your generated summary will appear here.</p>
+                </div>
+
+                <!-- Error/Message Box -->
+                <div id="message-box" class="hidden mt-4 p-3 rounded-lg text-sm" role="alert"></div>
+            </section>
+
+        </main>
+    </div>
+
+    <script>
+        const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
+        // NOTE: Leave the API key as an empty string. The Canvas environment will provide it at runtime.
+        const apiKey = "";
+
+        const textInput = document.getElementById('text-input');
+        const fileInput = document.getElementById('doc-input');
+        const fileStatus = document.getElementById('file-status');
+        const summaryOutput = document.getElementById('summary-output');
+        const summarizeBtn = document.getElementById('summarize-btn');
+        const messageBox = document.getElementById('message-box');
+        const wordCountDisplay = document.getElementById('word-count');
+
+        let uploadedFileContent = '';
+
+        // --- Utility Functions ---
+
+        /**
+         * Displays a temporary message in the message box.
+         * @param {string} message - The message content.
+         * @param {string} type - 'error' or 'success'.
+         */
+        function displayMessage(message, type) {
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden', 'bg-red-100', 'text-red-800', 'bg-green-100', 'text-green-800', 'bg-yellow-100', 'text-yellow-800');
+
+            if (type === 'error') {
+                messageBox.classList.add('bg-red-100', 'text-red-800');
+            } else if (type === 'success') {
+                messageBox.classList.add('bg-green-100', 'text-green-800');
+            } else if (type === 'warning') {
+                messageBox.classList.add('bg-yellow-100', 'text-yellow-800');
+            }
+
+            // Auto-hide the message after 5 seconds
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 5000);
+        }
+
+        /**
+         * Enables/disables the button and shows a loading state.
+         * @param {boolean} isLoading - True to show loading, false otherwise.
+         */
+        function setLoading(isLoading) {
+            if (isLoading) {
+                summarizeBtn.classList.add('loading-btn');
+                summarizeBtn.innerHTML = '<div class="spinner mr-2"></div> Summarizing...';
+            } else {
+                summarizeBtn.classList.remove('loading-btn');
+                summarizeBtn.innerHTML = 'Summarize Text';
+            }
+        }
+
+        // Array of common binary document extensions that we cannot parse client-side
+        const BINARY_DOC_EXTENSIONS = ['.pdf', '.docx', '.doc', '.odt', '.rtf'];
+
+        // --- File Handling ---
+
+        /**
+         * Handles the file selection and reads the content into a global variable.
+         * @param {FileList} files - List of files from the input.
+         */
+        function handleFileSelection(files) {
+            if (files.length === 0) {
+                fileStatus.textContent = '';
+                uploadedFileContent = '';
+                return;
+            }
+
+            const file = files[0];
+            const fileName = file.name;
+            const fileExtension = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
+            fileStatus.textContent = `Selected: ${fileName}`;
+            uploadedFileContent = ''; // Clear previous content
+
+            if (file.size > 1024 * 1024 * 5) { // 5MB limit
+                displayMessage('File is too large. Please select a document under 5MB.', 'error');
+                fileStatus.textContent = 'File too large.';
+                fileInput.value = ''; // Clear file input
+                return;
+            }
+
+            // Check if it's a known binary document type
+            if (BINARY_DOC_EXTENSIONS.includes(fileExtension)) {
+                displayMessage(`Warning: Binary documents (${fileExtension}) require specialized parsing. You might get garbled text. Please try copy/pasting the content for reliable summarization.`, 'warning');
+                // We still attempt to read as text, but warn the user.
+            } else {
+                // If it's a plain text-like file, clear any previous warnings.
+                messageBox.classList.add('hidden');
+            }
+
+            // For all files, we use readAsText, assuming the model can handle non-text characters
+            // if it's a garbled binary read, but mostly for plain-text file extensions.
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                uploadedFileContent = e.target.result;
+                displayMessage(`File "${fileName}" loaded successfully. Ready to summarize.`, 'success');
+                // Clear the text area if a file is loaded
+                textInput.value = '';
+            };
+            reader.onerror = () => {
+                displayMessage('Error reading file.', 'error');
+                uploadedFileContent = '';
+            };
+            reader.readAsText(file);
+        }
+
+        // --- LLM API Logic ---
+
+        /**
+         * Calls the Gemini API to get a summary.
+         * @param {string} text - The text to summarize.
+         * @returns {Promise<string>} - The generated summary text.
+         */
+        async function summarizeText(text) {
+            const systemPrompt = "You are an expert summarization tool. Your goal is to condense the provided text into a concise, easily digestible summary, retaining all core information and key arguments. Do not use markdown headers or bullet points unless the original text explicitly used them. Do not include any pre-amble or post-amble text.";
+
+            const userQuery = `Please summarize the following document:\n\n---\n\n${text}`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+                config: {
+                    // Optional: You can control the summary length by adjusting maxOutputTokens
+                    maxOutputTokens: 2048
+                }
+            };
+
+            const url = `${API_URL}${apiKey ? `?key=${apiKey}` : ''}`;
+
+            // Implement exponential backoff for resilience
+            let response;
+            for (let i = 0; i < 3; i++) {
+                try {
+                    response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        break; // Success
+                    } else if (response.status === 429) {
+                        // Too Many Requests, wait and retry
+                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                        console.warn(`Rate limit hit. Retrying in ${Math.round(delay / 1000)}s...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        // Other HTTP error, break and throw
+                        throw new Error(`API Error: ${response.statusText}`);
+                    }
+                } catch (e) {
+                    console.error("Fetch attempt failed:", e);
+                    if (i === 2) throw new Error("Failed to connect to the summarization service after multiple retries.");
+                }
+            }
+
+            if (!response || !response.ok) {
+                throw new Error("Failed to get a successful response from the summarization service.");
+            }
+
+            const result = await response.json();
+            const candidate = result.candidates?.[0];
+
+            if (candidate && candidate.content?.parts?.[0]?.text) {
+                return candidate.content.parts[0].text;
+            } else {
+                console.error("API response was valid but contained no text:", result);
+                throw new Error("The AI did not return a valid summary. Please try again or simplify your text.");
+            }
+        }
+
+        // --- Main Controller ---
+
+        /**
+         * Determines the source text and initiates the summarization process.
+         */
+        async function handleSummarizeClick() {
+            // Determine source text: Prioritize text area, then uploaded file
+            let sourceText = textInput.value.trim();
+            if (!sourceText && uploadedFileContent) {
+                sourceText = uploadedFileContent;
+            }
+
+            if (!sourceText) {
+                displayMessage('Please paste text or upload a document before summarizing.', 'error');
+                return;
+            }
+
+            // Simple word count for display purposes
+            const wordCount = sourceText.split(/\s+/).filter(w => w.length > 0).length;
+            if (wordCount < 10) {
+                displayMessage('The text is too short to summarize. Please provide at least 10 words.', 'error');
+                return;
+            }
+
+            summaryOutput.innerHTML = '<p class="text-gray-400 italic">Working on your summary...</p>';
+            wordCountDisplay.classList.add('hidden');
+            setLoading(true);
+
+            try {
+                const summary = await summarizeText(sourceText);
+                summaryOutput.textContent = summary;
+
+                // Update word count of the summary
+                const summaryWordCount = summary.split(/\s+/).filter(w => w.length > 0).length;
+                wordCountDisplay.textContent = `(~${summaryWordCount} words)`;
+                wordCountDisplay.classList.remove('hidden');
+
+            } catch (error) {
+                console.error("Summarization failed:", error);
+                summaryOutput.innerHTML = `<p class="text-red-500 font-medium">Error: ${error.message}</p>`;
+                displayMessage(`Failed to generate summary: ${error.message}`, 'error');
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // Initial setup to ensure both inputs don't hold data simultaneously
+        textInput.addEventListener('input', () => {
+            if (textInput.value.trim().length > 0) {
+                // If user starts typing, clear file input
+                fileInput.value = '';
+                uploadedFileContent = '';
+                fileStatus.textContent = '';
+                messageBox.classList.add('hidden');
+            }
+        });
+
+    </script>
+</body>
+
+</html>
